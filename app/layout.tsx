@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "สมาคม | ภาพรวมค่าบำรุง",
-  description: "ระบบแสดงข้อมูลรายการค่าบำรุงสมาคม",
+  title: "สมาคม | จัดการข้อมูลสมาชิก",
+  description: "ระบบจัดการทะเบียนสมาชิก รายการค่าบำรุง และประวัติการชำระสมาคม",
 };
 
 export default function RootLayout({

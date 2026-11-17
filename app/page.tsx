@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createXlsxWorkbook } from "@/lib/xlsx-workbook";
+import DashboardShell from "@/app/dashboard-shell";
+import MemberDirectory from "@/app/member-directory";
 
 type Summary = {
   feeTotal: number;
@@ -14,35 +15,6 @@ type Summary = {
   submissionRejected: number;
 };
 
-type SignedInCaretaker = {
-  id: string;
-  name: string;
-};
-
-type FeeRecord = {
-  submissionId: string;
-  studentItemId: string;
-  studentId: string | null;
-  guardianName: string | null;
-  submittedAmount: string;
-  paymentDatetime: string;
-  status: string;
-};
-
-type DuplicatePayment = {
-  studentItemId: string;
-  studentId: string | null;
-  guardianNames: string[];
-  submissionCount: number;
-};
-
-type DuplicateStudentId = {
-  cycleId: string;
-  studentId: string;
-  itemCount: number;
-  studentItemIds: string[];
-};
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -50,206 +22,45 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export default function Home() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [error, setError] = useState("");
-  const [caretaker, setCaretaker] = useState<SignedInCaretaker | null>(null);
-  const [authChecked, setAuthChecked] = useState(false);
-  const [records, setRecords] = useState<FeeRecord[]>([]);
-  const [recordsPage, setRecordsPage] = useState(1);
-  const [recordsHasMore, setRecordsHasMore] = useState(false);
-  const [recordsLoading, setRecordsLoading] = useState(false);
-  const [recordsError, setRecordsError] = useState("");
-  const [duplicatePayments, setDuplicatePayments] = useState<DuplicatePayment[]>([]);
-  const [duplicateStudentIds, setDuplicateStudentIds] = useState<DuplicateStudentId[]>([]);
-  const [duplicatesLoading, setDuplicatesLoading] = useState(true);
-  const [duplicatesError, setDuplicatesError] = useState("");
 
   useEffect(() => {
     let active = true;
-    fetch("/api/auth/session", { cache: "no-store" })
+    fetch("/api/fees", { cache: "no-store" })
       .then(async (response) => {
         const result: unknown = await response.json();
-        if (response.status === 401) {
-          window.location.replace("/login");
-          return null;
-        }
         if (!response.ok) {
-          const message = isRecord(result) && typeof result.error === "string"
-            ? result.error
-            : "ตรวจสอบสถานะเข้าสู่ระบบไม่สำเร็จ";
-          throw new Error(message);
+          throw new Error(
+            isRecord(result) && typeof result.error === "string"
+              ? result.error
+              : "โหลดข้อมูลสรุปไม่สำเร็จ",
+          );
         }
-        if (!isRecord(result) || typeof result.id !== "string" || typeof result.name !== "string") {
-          throw new Error("ข้อมูลผู้ดูแลที่ได้รับไม่ถูกต้อง");
+        if (
+          !isRecord(result) ||
+          typeof result.feeTotal !== "number" ||
+          typeof result.feePending !== "number" ||
+          typeof result.feeSubmitted !== "number" ||
+          typeof result.submissionTotal !== "number" ||
+          typeof result.submissionLatest !== "number" ||
+          typeof result.submissionWaiting !== "number" ||
+          typeof result.submissionApproved !== "number" ||
+          typeof result.submissionRejected !== "number"
+        ) {
+          throw new Error("รูปแบบข้อมูลสรุปไม่ถูกต้อง");
         }
-        return { id: result.id, name: result.name };
-      })
-      .then((result) => {
-        if (active && result) {
-          setCaretaker(result);
-          setAuthChecked(true);
-        }
-      })
-      .catch((reason: unknown) => {
-        if (active) {
-          setError(reason instanceof Error ? reason.message : "ตรวจสอบสถานะเข้าสู่ระบบไม่สำเร็จ");
-          setAuthChecked(true);
-        }
-      });
-
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!caretaker) return;
-    let active = true;
-    fetch("/api/fees")
-      .then(async (response) => {
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.error || "โหลดข้อมูลไม่สำเร็จ");
         return result as Summary;
       })
       .then((result) => {
         if (active) setSummary(result);
       })
       .catch((reason: unknown) => {
-        if (active) setError(reason instanceof Error ? reason.message : "เกิดข้อผิดพลาดในการโหลดข้อมูล");
+        if (active) setError(reason instanceof Error ? reason.message : "โหลดข้อมูลสรุปไม่สำเร็จ");
       });
 
     return () => {
       active = false;
     };
-  }, [caretaker]);
-
-  useEffect(() => {
-    if (!caretaker) return;
-    let active = true;
-    setRecordsLoading(true);
-    setRecordsError("");
-
-    fetch(`/api/fees/records?page=${recordsPage}`, { cache: "no-store" })
-    .then(async (response) => {
-      const result: unknown = await response.json();
-      if (response.status === 401) {
-        window.location.replace("/login");
-        return null;
-      }
-      if (!response.ok) {
-        const message = isRecord(result) && typeof result.error === "string"
-          ? result.error
-          : "โหลดรายการชำระไม่สำเร็จ";
-        throw new Error(message);
-      }
-      if (
-        !isRecord(result) ||
-        !Array.isArray(result.records) ||
-        typeof result.hasMore !== "boolean" ||
-        result.records.some(
-          (row) =>
-            !isRecord(row) ||
-            typeof row.submissionId !== "string" ||
-            typeof row.studentItemId !== "string" ||
-            (row.studentId !== null && typeof row.studentId !== "string") ||
-            (row.guardianName !== null && typeof row.guardianName !== "string") ||
-            typeof row.submittedAmount !== "string" ||
-            typeof row.paymentDatetime !== "string" ||
-            typeof row.status !== "string"
-        )
-      ) {
-        throw new Error("รูปแบบรายการชำระไม่ถูกต้อง");
-      }
-      return result as { records: FeeRecord[]; hasMore: boolean };
-    })
-    .then((result) => {
-      if (active && result) {
-        setRecords(result.records);
-        setRecordsHasMore(result.hasMore);
-      }
-    })
-    .catch((reason: unknown) => {
-      if (active) {
-        setRecordsError(reason instanceof Error ? reason.message : "เกิดข้อผิดพลาดในการโหลดรายการ");
-      }
-    })
-    .finally(() => {
-      if (active) setRecordsLoading(false);
-    });
-
-    return () => {
-    active = false;
-    };
-  }, [caretaker, recordsPage]);
-
-  useEffect(() => {
-    if (!caretaker) return;
-    let active = true;
-    setDuplicatesLoading(true);
-    setDuplicatesError("");
-
-    fetch("/api/fees/duplicates", { cache: "no-store" })
-      .then(async (response) => {
-        const result: unknown = await response.json();
-        if (response.status === 401) {
-          window.location.replace("/login");
-          return null;
-        }
-        if (!response.ok) {
-          const message = isRecord(result) && typeof result.error === "string"
-            ? result.error
-            : "ตรวจหารายการซ้ำไม่สำเร็จ";
-          throw new Error(message);
-        }
-        if (
-          !isRecord(result) ||
-          !Array.isArray(result.duplicatePayments) ||
-          !Array.isArray(result.duplicateStudentIds) ||
-          result.duplicatePayments.some(
-            (row) =>
-              !isRecord(row) ||
-              typeof row.studentItemId !== "string" ||
-              (row.studentId !== null && typeof row.studentId !== "string") ||
-              !Array.isArray(row.guardianNames) ||
-              row.guardianNames.some((name) => typeof name !== "string") ||
-              !Number.isSafeInteger(row.submissionCount) ||
-              Number(row.submissionCount) < 2,
-          ) ||
-          result.duplicateStudentIds.some(
-            (row) =>
-              !isRecord(row) ||
-              typeof row.cycleId !== "string" ||
-              typeof row.studentId !== "string" ||
-              !Number.isSafeInteger(row.itemCount) ||
-              Number(row.itemCount) < 2 ||
-              !Array.isArray(row.studentItemIds) ||
-              row.studentItemIds.some((id) => typeof id !== "string"),
-          )
-        ) {
-          throw new Error("รูปแบบรายงานรายการซ้ำไม่ถูกต้อง");
-        }
-        return result as {
-          duplicatePayments: DuplicatePayment[];
-          duplicateStudentIds: DuplicateStudentId[];
-        };
-      })
-      .then((result) => {
-        if (active && result) {
-          setDuplicatePayments(result.duplicatePayments);
-          setDuplicateStudentIds(result.duplicateStudentIds);
-        }
-      })
-      .catch((reason: unknown) => {
-        if (active) {
-          setDuplicatesError(reason instanceof Error ? reason.message : "เกิดข้อผิดพลาดในการตรวจรายการซ้ำ");
-        }
-      })
-      .finally(() => {
-        if (active) setDuplicatesLoading(false);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [caretaker]);
+  }, []);
 
   const feeCards = [
     { title: "รายการทั้งหมด", value: summary?.feeTotal, description: "รายการค่าบำรุง", icon: "▤", color: "blue" },
@@ -264,97 +75,20 @@ export default function Home() {
     { title: "ไม่อนุมัติ", value: summary?.submissionRejected, description: "หลักฐานไม่ผ่านการตรวจ", icon: "!", color: "red" },
   ];
 
-  if (!authChecked) {
-    return (
-      <main className="shell auth-loading" role="status">
-        <p>กำลังตรวจสอบการเข้าสู่ระบบ...</p>
-      </main>
-    );
-  }
-
-  if (!caretaker) {
-    return (
-      <main className="shell">
-        <div className="error-banner" role="alert">{error || "ไม่สามารถตรวจสอบการเข้าสู่ระบบได้"}</div>
-        <a className="login-link" href="/login">กลับไปหน้าเข้าสู่ระบบ</a>
-      </main>
-    );
-  }
-
-  const statusLabels: Record<string, string> = {
-    waiting_for_review: "รอตรวจสอบ",
-    approved: "อนุมัติแล้ว",
-    rejected: "ไม่อนุมัติ",
-    pending: "ยังไม่ชำระ",
-    submitted: "ส่งหลักฐานแล้ว",
-  };
-
-  function downloadDuplicateReport() {
-    const workbook = createXlsxWorkbook([
-      {
-        name: "รายการส่งหลักฐานซ้ำ",
-        headers: ["ผู้ปกครอง/ผู้ส่ง", "student_id", "student_item_id", "จำนวน submissions", "เกณฑ์"],
-        rows: duplicatePayments.map((item) => [
-          item.guardianNames.join(" / ") || "ไม่ระบุชื่อผู้ปกครอง",
-          item.studentId || "",
-          item.studentItemId,
-          item.submissionCount,
-          "รวมทุกสถานะ",
-        ]),
-        columnWidths: [32, 18, 40, 22, 18],
-      },
-      {
-        name: "รหัสนักเรียนซ้ำ",
-        headers: ["student_id", "cycle_id", "จำนวนรายการ", "student_item_ids"],
-        rows: duplicateStudentIds.map((item) => [
-          item.studentId,
-          item.cycleId,
-          item.itemCount,
-          item.studentItemIds.join(" | "),
-        ]),
-        columnWidths: [18, 40, 18, 60],
-      },
-    ]);
-    const bytes = new ArrayBuffer(workbook.byteLength);
-    new Uint8Array(bytes).set(workbook);
-    const blob = new Blob([bytes], {
-      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `duplicate-report-${new Date().toISOString().slice(0, 10)}.xlsx`;
-    link.click();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
-
   return (
-    <main className="shell">
-      <header className="topbar">
-        <div className="brand"><span className="brand-mark">ส</span><span>สมาคม<span className="brand-caption">ระบบข้อมูลสมาชิก</span></span></div>
-        <div className="topbar-actions">
-          <span className="signed-in">ผู้ดูแล: {caretaker.name}</span>
-          <button
-            className="logout-button"
-            onClick={async () => {
-              await fetch("/api/auth/logout", { method: "POST" });
-              window.location.replace("/login");
-            }}
-          >
-            ออกจากระบบ
-          </button>
+    <DashboardShell activePage="members">
+      <section className="intro hero">
+        <div>
+          <p className="eyebrow">ASSOCIATION · MEMBER DIRECTORY</p>
+          <h1>ทะเบียนสมาชิก</h1>
+          <p className="intro-copy">จัดการข้อมูลสมาชิกและค้นหาจากชื่อนักเรียน ผู้ปกครอง หรือรหัสนักเรียน</p>
         </div>
-      </header>
-
-      <section className="intro">
-        <p className="eyebrow">ASSOCIATION · PUBLIC OVERVIEW</p>
-        <h1>ภาพรวมค่าบำรุงสมาชิก</h1>
-        <p className="intro-copy">สรุปรายการค่าบำรุงและสถานะตรวจสอบหลักฐาน</p>
+        <div className="hero-status"><span /> พื้นที่ผู้ดูแลระบบ</div>
       </section>
 
       {error && <div className="error-banner" role="alert">{error}</div>}
 
-      <section className="summary-section" aria-labelledby="fees-heading">
+      <section id="overview" className="summary-section overview-section" aria-labelledby="fees-heading">
         <h2 id="fees-heading">ค่าบำรุงสมาชิก</h2>
         <div className="stats" aria-label="สรุปค่าบำรุง">
           {feeCards.map((card) => (
@@ -374,143 +108,19 @@ export default function Home() {
         <h2 id="submissions-heading">รายการหลักฐานการชำระ</h2>
         <div className="stats submission-stats" aria-label="สรุปหลักฐานการชำระ">
           {submissionCards.map((card) => (
-          <article className="stat-card" key={card.title}>
-            <div className={`stat-icon ${card.color}`}>{card.icon}</div>
-            <div>
-              <p>{card.title}</p>
-              <strong>{summary ? card.value?.toLocaleString("th-TH") : "—"}</strong>
-              <span>{card.description}</span>
-            </div>
-          </article>
+            <article className="stat-card" key={card.title}>
+              <div className={`stat-icon ${card.color}`}>{card.icon}</div>
+              <div>
+                <p>{card.title}</p>
+                <strong>{summary ? card.value?.toLocaleString("th-TH") : "—"}</strong>
+                <span>{card.description}</span>
+              </div>
+            </article>
           ))}
         </div>
       </section>
 
-      <section className="duplicates-section" aria-labelledby="duplicates-heading">
-        <div className="duplicates-heading">
-          <div>
-            <h2 id="duplicates-heading">ตรวจหารายการซ้ำ</h2>
-            <p>รายการส่งหลักฐานซ้ำรวมทุกสถานะ และรหัสนักเรียนซ้ำภายในรอบเดียวกัน</p>
-          </div>
-          <button
-            className="duplicate-download"
-            type="button"
-            onClick={downloadDuplicateReport}
-            disabled={
-              duplicatesLoading ||
-              (duplicatePayments.length === 0 && duplicateStudentIds.length === 0)
-            }
-          >
-            ดาวน์โหลดรายงาน Excel
-          </button>
-        </div>
-        {duplicatesError && <div className="error-banner" role="alert">{duplicatesError}</div>}
-        {duplicatesLoading ? (
-          <div className="duplicate-empty" role="status">กำลังตรวจหารายการซ้ำ...</div>
-        ) : (
-          <div className="duplicate-grid">
-            <article className="duplicate-card">
-              <h3>มี submission ซ้ำใน student_item เดียวกัน</h3>
-              <p className="duplicate-help">พบ 2 รายการขึ้นไปทุกสถานะ จึงเป็นรายการที่ควรตรวจสอบ ไม่ได้ยืนยันว่าชำระเงินจริงซ้ำ</p>
-              {duplicatePayments.length === 0 ? (
-                <p className="duplicate-empty">ไม่พบรายการ</p>
-              ) : (
-                <div className="duplicate-list">
-                  {duplicatePayments.map((item) => (
-                    <div className="duplicate-row" key={item.studentItemId}>
-                      <div>
-                        <strong>{item.guardianNames.length > 0 ? item.guardianNames.join(", ") : "ไม่ระบุชื่อผู้ปกครอง"}</strong>
-                        <span>นักเรียน: {item.studentId || "ไม่พบ student_id"}</span>
-                        <small>รายการ {item.studentItemId}</small>
-                      </div>
-                      <span className="duplicate-count">{item.submissionCount} ครั้ง</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </article>
-            <article className="duplicate-card">
-              <h3>student_id ซ้ำในรอบเดียวกัน</h3>
-              <p className="duplicate-help">นับรายการค่าบำรุงที่มี student_id เดียวกันภายใน cycle_id เดียวกัน</p>
-              {duplicateStudentIds.length === 0 ? (
-                <p className="duplicate-empty">ไม่พบรายการ</p>
-              ) : (
-                <div className="duplicate-list">
-                  {duplicateStudentIds.map((item) => (
-                    <div className="duplicate-row" key={`${item.cycleId}:${item.studentId}`}>
-                      <div>
-                        <strong>นักเรียน: {item.studentId}</strong>
-                        <span>รอบ: {item.cycleId}</span>
-                        <small>รายการ {item.studentItemIds.join(", ")}</small>
-                      </div>
-                      <span className="duplicate-count">{item.itemCount} รายการ</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </article>
-          </div>
-        )}
-      </section>
-
-      <section className="records-section" aria-labelledby="records-heading">
-        <div className="records-heading">
-          <div>
-            <h2 id="records-heading">เปรียบเทียบผู้ปกครองกับรายการนักเรียน</h2>
-            <p>แสดงชื่อผู้ส่งหลักฐานคู่กับ student_id ของรายการนักเรียน</p>
-          </div>
-          <span className="records-page">หน้า {recordsPage}</span>
-        </div>
-
-        {recordsError && <div className="error-banner" role="alert">{recordsError}</div>}
-        <div className="records-table-wrap">
-          <table className="records-table">
-            <thead>
-              <tr>
-                <th>ชื่อผู้ปกครอง/ผู้ส่ง</th>
-                <th>student_id (นักเรียน)</th>
-                <th>จำนวนเงิน</th>
-                <th>สถานะ</th>
-              </tr>
-            </thead>
-            <tbody>
-              {recordsLoading ? (
-                <tr><td colSpan={4} className="records-empty">กำลังโหลดรายการ...</td></tr>
-              ) : records.length === 0 ? (
-                <tr><td colSpan={4} className="records-empty">ไม่พบรายการในหน้านี้</td></tr>
-              ) : records.map((record) => (
-                <tr key={record.submissionId}>
-                  <td>{record.guardianName || "—"}</td>
-                  <td>
-                    <span className="student-id">{record.studentId || "—"}</span>
-                    <small className="record-reference">รายการ {record.studentItemId}</small>
-                  </td>
-                  <td>{Number(record.submittedAmount).toLocaleString("th-TH", { minimumFractionDigits: 2 })}</td>
-                  <td>{statusLabels[record.status] || record.status}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div className="records-pagination">
-          <button type="button" onClick={() => setRecordsPage((page) => page - 1)} disabled={recordsPage <= 1 || recordsLoading}>
-            ก่อนหน้า
-          </button>
-          <button type="button" onClick={() => setRecordsPage((page) => page + 1)} disabled={!recordsHasMore || recordsLoading}>
-            ถัดไป
-          </button>
-        </div>
-      </section>
-
-      <section className="privacy-card">
-        <div className="privacy-icon">i</div>
-        <div>
-          <h2>การแสดงข้อมูลรายบุคคล</h2>
-          <p>แสดงเฉพาะชื่อผู้ส่งหลักฐานและ student_id เพื่อเทียบรายการ ไม่แสดงรหัสนักศึกษาจากแหล่งอื่นหรือหลักฐานการโอน</p>
-        </div>
-      </section>
-
-      <footer>แสดงเฉพาะข้อมูลสรุปจากระบบค่าบำรุงสมาคม <span>·</span> ระบบสำหรับดูข้อมูลเท่านั้น</footer>
-    </main>
+      <MemberDirectory />
+    </DashboardShell>
   );
 }

@@ -1,0 +1,413 @@
+"use client";
+
+import { FormEvent, useEffect, useState } from "react";
+
+type Member = {
+  id: string;
+  cycleId: string;
+  studentId: string;
+  memberName: string;
+  contactInfo: string;
+  amount: number;
+  status: string;
+  note: string | null;
+  createdAt: string;
+};
+
+type Cycle = {
+  id: string;
+  memberCount: number;
+};
+
+type MemberForm = {
+  cycleId: string;
+  studentId: string;
+  memberName: string;
+  contactInfo: string;
+  amount: string;
+  note: string;
+};
+
+const emptyForm: MemberForm = {
+  cycleId: "",
+  studentId: "",
+  memberName: "",
+  contactInfo: "",
+  amount: "",
+  note: "",
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+export default function MemberManagement() {
+  const [members, setMembers] = useState<Member[]>([]);
+  const [cycles, setCycles] = useState<Cycle[]>([]);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [form, setForm] = useState<MemberForm>(emptyForm);
+  const [reload, setReload] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError("");
+
+    fetch(`/api/fees/members?page=${page}`, { cache: "no-store" })
+      .then(async (response) => {
+        const result: unknown = await response.json();
+        if (response.status === 401) {
+          window.location.replace("/login");
+          return null;
+        }
+        if (!response.ok) {
+          throw new Error(
+            isRecord(result) && typeof result.error === "string"
+              ? result.error
+              : "โหลดข้อมูลสมาชิกไม่สำเร็จ",
+          );
+        }
+        if (
+          !isRecord(result) ||
+          !Array.isArray(result.members) ||
+          !Array.isArray(result.cycles) ||
+          typeof result.hasMore !== "boolean" ||
+          result.members.some(
+            (member) =>
+              !isRecord(member) ||
+              typeof member.id !== "string" ||
+              typeof member.cycleId !== "string" ||
+              typeof member.studentId !== "string" ||
+              typeof member.memberName !== "string" ||
+              typeof member.contactInfo !== "string" ||
+              typeof member.amount !== "number" ||
+              typeof member.status !== "string" ||
+              (member.note !== null && typeof member.note !== "string") ||
+              typeof member.createdAt !== "string",
+          ) ||
+          result.cycles.some(
+            (cycle) =>
+              !isRecord(cycle) ||
+              typeof cycle.id !== "string" ||
+              typeof cycle.memberCount !== "number",
+          )
+        ) {
+          throw new Error("รูปแบบข้อมูลสมาชิกไม่ถูกต้อง");
+        }
+        return result as { members: Member[]; cycles: Cycle[]; hasMore: boolean };
+      })
+      .then((result) => {
+        if (!active || !result) return;
+        setMembers(result.members);
+        setCycles(result.cycles);
+        setHasMore(result.hasMore);
+      })
+      .catch((reason: unknown) => {
+        if (active) {
+          setError(reason instanceof Error ? reason.message : "เกิดข้อผิดพลาดในการโหลดสมาชิก");
+        }
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [page, reload]);
+
+  function startNewCycle() {
+    const id = crypto.randomUUID();
+    setCycles((current) => [...current.filter((cycle) => cycle.id !== id), { id, memberCount: 0 }]);
+    setForm((current) => ({ ...current, cycleId: id }));
+    setMessage("สร้างรอบใหม่แล้ว รอบจะถูกบันทึกเมื่อเพิ่มสมาชิกคนแรก");
+    setError("");
+  }
+
+  function editMember(member: Member) {
+    setEditingId(member.id);
+    setFormOpen(true);
+    setForm({
+      cycleId: member.cycleId,
+      studentId: member.studentId,
+      memberName: member.memberName,
+      contactInfo: member.contactInfo,
+      amount: String(member.amount),
+      note: member.note || "",
+    });
+    setMessage("");
+    setError("");
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setFormOpen(false);
+    setForm((current) => ({ ...emptyForm, cycleId: current.cycleId }));
+    setError("");
+    setMessage("");
+  }
+
+  function startAddFeeItem() {
+    setEditingId(null);
+    setForm((current) => ({
+      ...emptyForm,
+      cycleId: current.cycleId || cycles[0]?.id || "",
+    }));
+    setFormOpen(true);
+    setError("");
+    setMessage("");
+  }
+
+  async function submitMember(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await fetch(
+        editingId ? `/api/fees/members/${editingId}` : "/api/fees/members",
+        {
+          method: editingId ? "PATCH" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...form, amount: Number(form.amount) }),
+        },
+      );
+      const result: unknown = await response.json();
+      if (response.status === 401) {
+        window.location.replace("/login");
+        return;
+      }
+      if (!response.ok) {
+        throw new Error(
+          isRecord(result) && typeof result.error === "string"
+            ? result.error
+            : "บันทึกข้อมูลสมาชิกไม่สำเร็จ",
+        );
+      }
+
+      setMessage(editingId ? "แก้ไขรายการค่าบำรุงเรียบร้อยแล้ว" : "เพิ่มรายการค่าบำรุงเรียบร้อยแล้ว");
+      setEditingId(null);
+      setFormOpen(false);
+      setForm((current) => ({ ...emptyForm, cycleId: current.cycleId }));
+      setPage(1);
+      setReload((current) => current + 1);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "เกิดข้อผิดพลาดในการบันทึกสมาชิก");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteMember(member: Member) {
+    if (!window.confirm(`ยืนยันลบสมาชิก ${member.memberName} (${member.studentId})?`)) return;
+    setError("");
+    setMessage("");
+    try {
+      const response = await fetch(`/api/fees/members/${member.id}`, { method: "DELETE" });
+      const result: unknown = await response.json();
+      if (response.status === 401) {
+        window.location.replace("/login");
+        return;
+      }
+      if (!response.ok) {
+        throw new Error(
+          isRecord(result) && typeof result.error === "string"
+            ? result.error
+            : "ลบสมาชิกไม่สำเร็จ",
+        );
+      }
+
+      setMessage("ลบสมาชิกเรียบร้อยแล้ว");
+      if (members.length === 1 && page > 1) setPage((current) => current - 1);
+      else setReload((current) => current + 1);
+      if (editingId === member.id) cancelEdit();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "เกิดข้อผิดพลาดในการลบสมาชิก");
+    }
+  }
+
+  const statusLabels: Record<string, string> = {
+    pending: "ยังไม่ชำระ",
+    submitted: "ส่งหลักฐานแล้ว",
+  };
+
+  return (
+    <section id="fee-management" className="members-section fee-management-section" aria-labelledby="members-heading">
+      <div className="members-heading">
+        <div>
+          <p className="section-kicker">ข้อมูลตามรอบ · สถานะค่าบำรุง</p>
+          <h2 id="members-heading">จัดการรายการค่าบำรุง</h2>
+          <p>เพิ่ม แก้ไข หรือลบรายการค่าบำรุงรายสมาชิกในแต่ละรอบ</p>
+        </div>
+        <div className="directory-heading-actions">
+          <span className="records-page">หน้า {page}</span>
+          <button type="button" className="secondary-button add-member-button" onClick={startAddFeeItem}>
+            <span aria-hidden="true">＋</span> เพิ่มรายการ
+          </button>
+        </div>
+      </div>
+
+      {error && <div className="error-banner" role="alert">{error}</div>}
+      {message && <div className="success-banner" role="status">{message}</div>}
+
+      {formOpen && (
+      <form className="member-form member-editor" onSubmit={submitMember}>
+        <div className="member-editor-heading">
+          <div>
+            <p className="section-kicker">{editingId ? "แก้ไขข้อมูล" : "เพิ่มข้อมูลใหม่"}</p>
+            <h3>{editingId ? "แก้ไขรายการค่าบำรุง" : "เพิ่มรายการค่าบำรุง"}</h3>
+          </div>
+          <button type="button" className="icon-button" onClick={cancelEdit} aria-label="ปิดแบบฟอร์ม">
+            ×
+          </button>
+        </div>
+        <div className="member-form-grid">
+          <label>
+            ชื่อสมาชิก
+            <input
+              required
+              maxLength={200}
+              value={form.memberName}
+              onChange={(event) => setForm({ ...form, memberName: event.target.value })}
+              autoComplete="name"
+            />
+          </label>
+          <label>
+            รหัสนักเรียน
+            <input
+              required
+              maxLength={100}
+              value={form.studentId}
+              onChange={(event) => setForm({ ...form, studentId: event.target.value })}
+            />
+          </label>
+          <label>
+            ช่องทางติดต่อ
+            <input
+              maxLength={200}
+              value={form.contactInfo}
+              onChange={(event) => setForm({ ...form, contactInfo: event.target.value })}
+              placeholder="เช่น เบอร์โทรศัพท์"
+              autoComplete="tel"
+            />
+          </label>
+          <label>
+            รอบค่าบำรุง
+            <div className="member-cycle-control">
+              <select
+                required
+                value={form.cycleId}
+                onChange={(event) => setForm({ ...form, cycleId: event.target.value })}
+              >
+                <option value="">เลือกรอบค่าบำรุง</option>
+                {form.cycleId && !cycles.some((cycle) => cycle.id === form.cycleId) && (
+                  <option value={form.cycleId}>รอบ {form.cycleId} (ไม่มีสมาชิก)</option>
+                )}
+                {cycles.map((cycle) => (
+                  <option key={cycle.id} value={cycle.id}>
+                    {cycle.memberCount > 0
+                      ? `รอบ ${cycle.id} (${cycle.memberCount} คน)`
+                      : `รอบใหม่ ${cycle.id}`}
+                  </option>
+                ))}
+              </select>
+              <button type="button" className="secondary-button" onClick={startNewCycle}>
+                สร้างรอบใหม่
+              </button>
+            </div>
+          </label>
+          <label>
+            จำนวนเงิน (บาท)
+            <input
+              required
+              type="number"
+              min="0.01"
+              max="9999999999.99"
+              step="0.01"
+              value={form.amount}
+              onChange={(event) => setForm({ ...form, amount: event.target.value })}
+            />
+          </label>
+          <label className="member-note-field">
+            หมายเหตุ
+            <textarea
+              maxLength={1000}
+              rows={2}
+              value={form.note}
+              onChange={(event) => setForm({ ...form, note: event.target.value })}
+            />
+          </label>
+        </div>
+        <div className="member-form-actions">
+          <button type="submit" className="primary-button" disabled={saving}>
+            {saving ? "กำลังบันทึก..." : editingId ? "บันทึกการแก้ไข" : "เพิ่มรายการค่าบำรุง"}
+          </button>
+          {editingId && (
+            <button type="button" className="secondary-button" onClick={cancelEdit} disabled={saving}>
+              ยกเลิก
+            </button>
+          )}
+        </div>
+      </form>
+      )}
+
+      <div className="records-table-wrap member-table-wrap fee-table-wrap">
+        <table className="records-table members-table">
+          <thead>
+            <tr>
+              <th>ชื่อสมาชิก</th>
+              <th>รหัสนักเรียน</th>
+              <th>ช่องทางติดต่อ</th>
+              <th>รอบค่าบำรุง</th>
+              <th>จำนวนเงิน</th>
+              <th>สถานะ</th>
+              <th>จัดการ</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr><td colSpan={7} className="records-empty">กำลังโหลดสมาชิก...</td></tr>
+            ) : members.length === 0 ? (
+              <tr><td colSpan={7} className="records-empty">ยังไม่มีข้อมูลสมาชิก</td></tr>
+            ) : members.map((member) => (
+              <tr key={member.id}>
+                <td>{member.memberName || "—"}</td>
+                <td>{member.studentId}</td>
+                <td>{member.contactInfo || "—"}</td>
+                <td><span className="member-cycle-id">{member.cycleId}</span></td>
+                <td>{member.amount.toLocaleString("th-TH", { minimumFractionDigits: 2 })}</td>
+                <td>{statusLabels[member.status] || member.status}</td>
+                <td>
+                  <div className="member-row-actions">
+                    <button type="button" className="text-button" onClick={() => editMember(member)}>
+                      แก้ไข
+                    </button>
+                    <button type="button" className="text-button danger-button" onClick={() => deleteMember(member)}>
+                      ลบ
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="records-pagination">
+        <button type="button" onClick={() => setPage((current) => current - 1)} disabled={page <= 1 || loading}>
+          ก่อนหน้า
+        </button>
+        <button type="button" onClick={() => setPage((current) => current + 1)} disabled={!hasMore || loading}>
+          ถัดไป
+        </button>
+      </div>
+      <p className="member-delete-note">สมาชิกที่มีประวัติการชำระเงินจะไม่สามารถลบได้ เพื่อรักษาประวัติเดิม</p>
+    </section>
+  );
+}

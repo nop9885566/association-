@@ -1,12 +1,14 @@
 # Association fee overview
 
-Read-only fee summary built with Next.js App Router and Supabase. Public responses include aggregate counts only; student identifiers, individual payment records, and receipt URLs are not exposed.
+Fee summary and caretaker member-management app built with Next.js App Router and Supabase. Public responses include aggregate counts only; student identifiers, individual payment records, and receipt URLs are not exposed.
 
 The app uses the Supabase `anon` key and does not use Supabase Auth. Caretakers can sign in at `/login` using a 4–6 digit PIN. A database-backed, expiring session is stored in an HTTP-only cookie; individual payment records are only returned for a valid session. The fee summary remains public.
 
+The caretaker dashboard separates the member directory (`/`), fee-item management (`/fees`), and guardian/student payment comparison (`/records`) into distinct pages.
+
 ## Setup
 
-1. Run the SQL migrations in `supabase/migrations` in timestamp order in the Supabase SQL Editor. They create the fee and caretaker schemas if missing, secure direct table access, and grant `anon` access to summary, caretaker login, session, and session-checked record functions. `CREATE TABLE IF NOT EXISTS` preserves existing tables and their data. The caretaker migration expects `public.caretakers` to have `id`, `name`, `pin_hash`, and `is_active` columns if that table already exists.
+1. Run the SQL migrations in `supabase/migrations` in timestamp order in the Supabase SQL Editor. They create the fee and caretaker schemas if missing, secure direct table access, and grant `anon` access to summary, caretaker login, session, and session-checked record functions. The fee-item migration adds name and contact fields while preserving existing rows. The member-directory migration creates a separate one-row-per-student directory. The ITPC data migration populates it directly from the existing `public.itpc_family_students_rows`, `public.itpc_family_guardians_rows`, and `public.itpc_students_rows` tables. The caretaker migration expects `public.caretakers` to have `id`, `name`, `pin_hash`, and `is_active` columns if that table already exists.
 2. Add caretaker records in the Supabase SQL Editor. Store only a bcrypt hash, for example:
 
    ```sql
@@ -24,4 +26,4 @@ The app uses the Supabase `anon` key and does not use Supabase Auth. Caretakers 
    npm run dev
    ```
 
-`GET /api/fees` returns aggregate counts. `GET /api/auth/caretakers` returns caretaker IDs and names; `POST /api/auth/login` verifies a PIN without returning its hash and creates a database-backed session. `GET /api/fees/records` requires that session and shows the latest submission's guardian/uploader name alongside `student_id`, joined by `student_item_id`. `GET /api/fees/duplicates` requires the same session and reports repeat submissions for a student item (all statuses) and duplicate student IDs within one cycle. These are review indicators, not proof of duplicate payments. The duplicate report can be downloaded as an Excel workbook with separate sheets for each duplicate type. The `student_id` is an identifier, not a student name. This project has no insert, update, delete, upload, or payment-review endpoints. The private storage bucket is not accessed or made public.
+`GET /api/fees` returns aggregate counts. `GET /api/auth/caretakers` returns caretaker IDs and names; `POST /api/auth/login` verifies a PIN without returning its hash and creates a database-backed session. `GET /api/fees/records` requires that session and shows the latest submission's guardian/uploader name alongside `student_id`, joined by `student_item_id`. Caretakers can add, edit, and delete member-directory entries through the authenticated member endpoints; the directory stores one row per child, with parent, guardian, and child names. It links to fee records by `student_id`, and prevents changing or deleting an ID when fee items already use it. Fee items remain managed per cycle. A new fee cycle is assigned a UUID from the fee-management form. The private storage bucket is not accessed or made public.
