@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createXlsxWorkbook } from "@/lib/xlsx-workbook";
 
 type Summary = {
   feeTotal: number;
@@ -28,6 +29,20 @@ type FeeRecord = {
   status: string;
 };
 
+type DuplicatePayment = {
+  studentItemId: string;
+  studentId: string | null;
+  guardianNames: string[];
+  submissionCount: number;
+};
+
+type DuplicateStudentId = {
+  cycleId: string;
+  studentId: string;
+  itemCount: number;
+  studentItemIds: string[];
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -42,6 +57,10 @@ export default function Home() {
   const [recordsHasMore, setRecordsHasMore] = useState(false);
   const [recordsLoading, setRecordsLoading] = useState(false);
   const [recordsError, setRecordsError] = useState("");
+  const [duplicatePayments, setDuplicatePayments] = useState<DuplicatePayment[]>([]);
+  const [duplicateStudentIds, setDuplicateStudentIds] = useState<DuplicateStudentId[]>([]);
+  const [duplicatesLoading, setDuplicatesLoading] = useState(true);
+  const [duplicatesError, setDuplicatesError] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -161,6 +180,77 @@ export default function Home() {
     };
   }, [caretaker, recordsPage]);
 
+  useEffect(() => {
+    if (!caretaker) return;
+    let active = true;
+    setDuplicatesLoading(true);
+    setDuplicatesError("");
+
+    fetch("/api/fees/duplicates", { cache: "no-store" })
+      .then(async (response) => {
+        const result: unknown = await response.json();
+        if (response.status === 401) {
+          window.location.replace("/login");
+          return null;
+        }
+        if (!response.ok) {
+          const message = isRecord(result) && typeof result.error === "string"
+            ? result.error
+            : "ตรวจหารายการซ้ำไม่สำเร็จ";
+          throw new Error(message);
+        }
+        if (
+          !isRecord(result) ||
+          !Array.isArray(result.duplicatePayments) ||
+          !Array.isArray(result.duplicateStudentIds) ||
+          result.duplicatePayments.some(
+            (row) =>
+              !isRecord(row) ||
+              typeof row.studentItemId !== "string" ||
+              (row.studentId !== null && typeof row.studentId !== "string") ||
+              !Array.isArray(row.guardianNames) ||
+              row.guardianNames.some((name) => typeof name !== "string") ||
+              !Number.isSafeInteger(row.submissionCount) ||
+              Number(row.submissionCount) < 2,
+          ) ||
+          result.duplicateStudentIds.some(
+            (row) =>
+              !isRecord(row) ||
+              typeof row.cycleId !== "string" ||
+              typeof row.studentId !== "string" ||
+              !Number.isSafeInteger(row.itemCount) ||
+              Number(row.itemCount) < 2 ||
+              !Array.isArray(row.studentItemIds) ||
+              row.studentItemIds.some((id) => typeof id !== "string"),
+          )
+        ) {
+          throw new Error("รูปแบบรายงานรายการซ้ำไม่ถูกต้อง");
+        }
+        return result as {
+          duplicatePayments: DuplicatePayment[];
+          duplicateStudentIds: DuplicateStudentId[];
+        };
+      })
+      .then((result) => {
+        if (active && result) {
+          setDuplicatePayments(result.duplicatePayments);
+          setDuplicateStudentIds(result.duplicateStudentIds);
+        }
+      })
+      .catch((reason: unknown) => {
+        if (active) {
+          setDuplicatesError(reason instanceof Error ? reason.message : "เกิดข้อผิดพลาดในการตรวจรายการซ้ำ");
+        }
+      })
+      .finally(() => {
+        if (active) setDuplicatesLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [caretaker]);
+
   const feeCards = [
     { title: "รายการทั้งหมด", value: summary?.feeTotal, description: "รายการค่าบำรุง", icon: "▤", color: "blue" },
     { title: "ส่งหลักฐานแล้ว", value: summary?.feeSubmitted, description: "มีการส่งหลักฐานแล้ว", icon: "◷", color: "amber" },
@@ -198,6 +288,46 @@ export default function Home() {
     pending: "ยังไม่ชำระ",
     submitted: "ส่งหลักฐานแล้ว",
   };
+
+  function downloadDuplicateReport() {
+    const workbook = createXlsxWorkbook([
+      {
+        name: "รายการส่งหลักฐานซ้ำ",
+        headers: ["ผู้ปกครอง/ผู้ส่ง", "student_id", "student_item_id", "จำนวน submissions", "เกณฑ์"],
+        rows: duplicatePayments.map((item) => [
+          item.guardianNames.join(" / ") || "ไม่ระบุชื่อผู้ปกครอง",
+          item.studentId || "",
+          item.studentItemId,
+          item.submissionCount,
+          "รวมทุกสถานะ",
+        ]),
+        columnWidths: [32, 18, 40, 22, 18],
+      },
+      {
+        name: "รหัสนักเรียนซ้ำ",
+        headers: ["student_id", "cycle_id", "จำนวนรายการ", "student_item_ids"],
+        rows: duplicateStudentIds.map((item) => [
+          item.studentId,
+          item.cycleId,
+          item.itemCount,
+          item.studentItemIds.join(" | "),
+        ]),
+        columnWidths: [18, 40, 18, 60],
+      },
+    ]);
+    const bytes = new ArrayBuffer(workbook.byteLength);
+    new Uint8Array(bytes).set(workbook);
+    const blob = new Blob([bytes], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `duplicate-report-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
   return (
     <main className="shell">
       <header className="topbar">
@@ -254,6 +384,73 @@ export default function Home() {
           </article>
           ))}
         </div>
+      </section>
+
+      <section className="duplicates-section" aria-labelledby="duplicates-heading">
+        <div className="duplicates-heading">
+          <div>
+            <h2 id="duplicates-heading">ตรวจหารายการซ้ำ</h2>
+            <p>รายการส่งหลักฐานซ้ำรวมทุกสถานะ และรหัสนักเรียนซ้ำภายในรอบเดียวกัน</p>
+          </div>
+          <button
+            className="duplicate-download"
+            type="button"
+            onClick={downloadDuplicateReport}
+            disabled={
+              duplicatesLoading ||
+              (duplicatePayments.length === 0 && duplicateStudentIds.length === 0)
+            }
+          >
+            ดาวน์โหลดรายงาน Excel
+          </button>
+        </div>
+        {duplicatesError && <div className="error-banner" role="alert">{duplicatesError}</div>}
+        {duplicatesLoading ? (
+          <div className="duplicate-empty" role="status">กำลังตรวจหารายการซ้ำ...</div>
+        ) : (
+          <div className="duplicate-grid">
+            <article className="duplicate-card">
+              <h3>มี submission ซ้ำใน student_item เดียวกัน</h3>
+              <p className="duplicate-help">พบ 2 รายการขึ้นไปทุกสถานะ จึงเป็นรายการที่ควรตรวจสอบ ไม่ได้ยืนยันว่าชำระเงินจริงซ้ำ</p>
+              {duplicatePayments.length === 0 ? (
+                <p className="duplicate-empty">ไม่พบรายการ</p>
+              ) : (
+                <div className="duplicate-list">
+                  {duplicatePayments.map((item) => (
+                    <div className="duplicate-row" key={item.studentItemId}>
+                      <div>
+                        <strong>{item.guardianNames.length > 0 ? item.guardianNames.join(", ") : "ไม่ระบุชื่อผู้ปกครอง"}</strong>
+                        <span>นักเรียน: {item.studentId || "ไม่พบ student_id"}</span>
+                        <small>รายการ {item.studentItemId}</small>
+                      </div>
+                      <span className="duplicate-count">{item.submissionCount} ครั้ง</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </article>
+            <article className="duplicate-card">
+              <h3>student_id ซ้ำในรอบเดียวกัน</h3>
+              <p className="duplicate-help">นับรายการค่าบำรุงที่มี student_id เดียวกันภายใน cycle_id เดียวกัน</p>
+              {duplicateStudentIds.length === 0 ? (
+                <p className="duplicate-empty">ไม่พบรายการ</p>
+              ) : (
+                <div className="duplicate-list">
+                  {duplicateStudentIds.map((item) => (
+                    <div className="duplicate-row" key={`${item.cycleId}:${item.studentId}`}>
+                      <div>
+                        <strong>นักเรียน: {item.studentId}</strong>
+                        <span>รอบ: {item.cycleId}</span>
+                        <small>รายการ {item.studentItemIds.join(", ")}</small>
+                      </div>
+                      <span className="duplicate-count">{item.itemCount} รายการ</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </article>
+          </div>
+        )}
       </section>
 
       <section className="records-section" aria-labelledby="records-heading">
