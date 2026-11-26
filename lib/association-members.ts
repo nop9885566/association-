@@ -1,13 +1,25 @@
 export const associationMemberIdPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+export const associationClassroomOptions = [
+  "อ.1",
+  "อ.2",
+  "อ.3",
+  "ป.1",
+  "ป.2",
+  "ป.3",
+  "ป.4",
+  "ป.5",
+  "ป.6",
+] as const;
+
 export type AssociationMemberInput = {
   familyId: string;
   studentId: string;
-  fatherName: string;
-  motherName: string;
-  guardianName: string;
+  parent1Name: string;
+  parent2Name: string;
   childName: string;
+  classroom: string;
   isActive: boolean;
 };
 
@@ -24,15 +36,17 @@ export function isAssociationMemberInput(value: unknown): value is AssociationMe
     typeof value.studentId === "string" &&
     value.studentId.trim().length > 0 &&
     value.studentId.trim().length <= 100 &&
-    typeof value.fatherName === "string" &&
-    value.fatherName.length <= 200 &&
-    typeof value.motherName === "string" &&
-    value.motherName.length <= 200 &&
-    typeof value.guardianName === "string" &&
-    value.guardianName.length <= 200 &&
+    typeof value.parent1Name === "string" &&
+    value.parent1Name.trim().length > 0 &&
+    value.parent1Name.trim().length <= 200 &&
+    typeof value.parent2Name === "string" &&
+    value.parent2Name.length <= 200 &&
+    (!value.parent2Name.trim() || value.parent2Name.trim() !== value.parent1Name.trim()) &&
     typeof value.childName === "string" &&
     value.childName.trim().length > 0 &&
     value.childName.trim().length <= 200 &&
+    typeof value.classroom === "string" &&
+    value.classroom.length <= 100 &&
     typeof value.isActive === "boolean"
   );
 }

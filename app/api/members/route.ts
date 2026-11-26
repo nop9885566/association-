@@ -1,25 +1,41 @@
 import { NextResponse } from "next/server";
 import {
+  associationClassroomOptions,
   associationMemberIdPattern,
   isAssociationMemberInput,
 } from "@/lib/association-members";
 import { requireCaretakerApiSession } from "@/lib/caretaker-api-session";
 
 const pageSize = 50;
+const allowedClassrooms: ReadonlySet<string> = new Set(associationClassroomOptions);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function getParentNames(row: {
+  father_name: string;
+  mother_name: string;
+  guardian_name: string;
+}): string[] {
+  return [row.father_name, row.mother_name, row.guardian_name]
+    .map((name) => name.trim())
+    .filter((name, index, allNames) => name.length > 0 && allNames.indexOf(name) === index);
 }
 
 export async function GET(request: Request) {
   const searchParams = new URL(request.url).searchParams;
   const requestedPage = Number(searchParams.get("page") ?? "1");
   const search = (searchParams.get("q") ?? "").trim();
+  const classroom = (searchParams.get("classroom") ?? "").trim();
   if (!Number.isSafeInteger(requestedPage) || requestedPage < 1) {
     return NextResponse.json({ error: "หมายเลขหน้าไม่ถูกต้อง" }, { status: 400 });
   }
   if (search.length > 100) {
     return NextResponse.json({ error: "คำค้นหายาวเกินไป" }, { status: 400 });
+  }
+  if (classroom && !allowedClassrooms.has(classroom)) {
+    return NextResponse.json({ error: "ระดับชั้นที่เลือกไม่ถูกต้อง" }, { status: 400 });
   }
 
   try {
@@ -30,6 +46,7 @@ export async function GET(request: Request) {
       session.supabase.rpc("search_association_members", {
         p_session_token: session.token,
         p_search: search,
+        p_classroom: classroom,
         p_limit: pageSize + 1,
         p_offset: (requestedPage - 1) * pageSize,
       }),
@@ -62,6 +79,7 @@ export async function GET(request: Request) {
           typeof row.mother_name !== "string" ||
           typeof row.guardian_name !== "string" ||
           typeof row.child_name !== "string" ||
+          typeof row.classroom !== "string" ||
           typeof row.is_active !== "boolean" ||
           typeof row.has_fee_records !== "boolean" ||
           typeof row.created_at !== "string"
@@ -81,18 +99,22 @@ export async function GET(request: Request) {
     }
 
     return NextResponse.json({
-      members: rows.slice(0, pageSize).map((row) => ({
-        id: row.id,
-        familyId: row.family_id,
-        studentId: row.student_id,
-        fatherName: row.father_name,
-        motherName: row.mother_name,
-        guardianName: row.guardian_name,
-        childName: row.child_name,
-        isActive: row.is_active,
-        hasFeeRecords: row.has_fee_records,
-        createdAt: row.created_at,
-      })),
+      members: rows.slice(0, pageSize).map((row) => {
+        const parentNames = getParentNames(row);
+        return {
+          id: row.id,
+          familyId: row.family_id,
+          studentId: row.student_id,
+          parent1Name: parentNames[0] ?? "",
+          parent2Name: parentNames[1] ?? "",
+          hasExtraParentNames: parentNames.length > 2,
+          childName: row.child_name,
+          classroom: row.classroom,
+          isActive: row.is_active,
+          hasFeeRecords: row.has_fee_records,
+          createdAt: row.created_at,
+        };
+      }),
       families: families.map((family) => ({
         id: family.family_id,
         memberCount: Number(family.member_count),
@@ -125,10 +147,11 @@ export async function POST(request: Request) {
       p_session_token: session.token,
       p_family_id: body.familyId,
       p_student_id: body.studentId,
-      p_father_name: body.fatherName,
-      p_mother_name: body.motherName,
-      p_guardian_name: body.guardianName,
+      p_father_name: body.parent1Name,
+      p_mother_name: body.parent2Name,
+      p_guardian_name: "",
       p_child_name: body.childName,
+      p_classroom: body.classroom,
       p_is_active: body.isActive,
     });
     if (error) {

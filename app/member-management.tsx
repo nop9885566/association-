@@ -12,6 +12,9 @@ type Member = {
   status: string;
   note: string | null;
   createdAt: string;
+  feeType: "membership" | "tuition" | null;
+  academicYear: number | null;
+  semester: number | null;
 };
 
 type Cycle = {
@@ -26,6 +29,9 @@ type MemberForm = {
   contactInfo: string;
   amount: string;
   note: string;
+  feeType: "" | "membership" | "tuition";
+  academicYear: string;
+  semester: "" | "1" | "2";
 };
 
 const emptyForm: MemberForm = {
@@ -35,6 +41,9 @@ const emptyForm: MemberForm = {
   contactInfo: "",
   amount: "",
   note: "",
+  feeType: "membership",
+  academicYear: "2569",
+  semester: "",
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -45,9 +54,11 @@ export default function MemberManagement() {
   const [members, setMembers] = useState<Member[]>([]);
   const [cycles, setCycles] = useState<Cycle[]>([]);
   const [page, setPage] = useState(1);
+  const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "submitted">("all");
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [rateLoading, setRateLoading] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -60,7 +71,9 @@ export default function MemberManagement() {
     setLoading(true);
     setError("");
 
-    fetch(`/api/fees/members?page=${page}`, { cache: "no-store" })
+    const query = new URLSearchParams({ page: String(page) });
+    if (statusFilter !== "all") query.set("status", statusFilter);
+    fetch(`/api/fees/members?${query.toString()}`, { cache: "no-store" })
       .then(async (response) => {
         const result: unknown = await response.json();
         if (response.status === 401) {
@@ -90,6 +103,9 @@ export default function MemberManagement() {
               typeof member.amount !== "number" ||
               typeof member.status !== "string" ||
               (member.note !== null && typeof member.note !== "string") ||
+              (member.feeType !== null && member.feeType !== "membership" && member.feeType !== "tuition") ||
+              (member.academicYear !== null && typeof member.academicYear !== "number") ||
+              (member.semester !== null && typeof member.semester !== "number") ||
               typeof member.createdAt !== "string",
           ) ||
           result.cycles.some(
@@ -121,7 +137,7 @@ export default function MemberManagement() {
     return () => {
       active = false;
     };
-  }, [page, reload]);
+  }, [page, reload, statusFilter]);
 
   function startNewCycle() {
     const id = crypto.randomUUID();
@@ -141,6 +157,9 @@ export default function MemberManagement() {
       contactInfo: member.contactInfo,
       amount: String(member.amount),
       note: member.note || "",
+      feeType: member.feeType || "",
+      academicYear: member.academicYear ? String(member.academicYear) : "",
+      semester: member.semester === 1 ? "1" : member.semester === 2 ? "2" : "",
     });
     setMessage("");
     setError("");
@@ -165,6 +184,60 @@ export default function MemberManagement() {
     setMessage("");
   }
 
+  async function applyScheduleRate() {
+    const academicYear = Number(form.academicYear);
+    if (
+      !Number.isSafeInteger(academicYear) ||
+      academicYear < 2500 ||
+      academicYear > 2700 ||
+      !form.feeType ||
+      (form.feeType === "tuition" && !form.semester)
+    ) {
+      setError("กรุณาเลือกประเภทค่าบำรุง ปีการศึกษา และภาคเรียนให้ครบ");
+      return;
+    }
+
+    setRateLoading(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await fetch(`/api/fees/schedule?academicYear=${academicYear}`, { cache: "no-store" });
+      const result: unknown = await response.json();
+      if (response.status === 401) {
+        window.location.replace("/login");
+        return;
+      }
+      if (!response.ok) {
+        throw new Error(
+          isRecord(result) && typeof result.error === "string"
+            ? result.error
+            : "อ่านอัตราค่าบำรุงไม่สำเร็จ",
+        );
+      }
+      if (!isRecord(result) || !isRecord(result.schedule)) {
+        throw new Error("ยังไม่ได้กำหนดอัตราค่าบำรุงสำหรับปีการศึกษานี้");
+      }
+
+      const rateKey =
+        form.feeType === "membership"
+          ? "membershipAmount"
+          : form.semester === "1"
+            ? "semester1Amount"
+            : "semester2Amount";
+      const amount = Number(result.schedule[rateKey]);
+      if (!Number.isFinite(amount) || amount < 0) {
+        throw new Error("อัตราค่าบำรุงที่บันทึกไว้ไม่ถูกต้อง");
+      }
+
+      setForm((current) => ({ ...current, amount: String(amount) }));
+      setMessage(`นำอัตราปีการศึกษา ${academicYear} มาใส่ในรายการแล้ว`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "อ่านอัตราค่าบำรุงไม่สำเร็จ");
+    } finally {
+      setRateLoading(false);
+    }
+  }
+
   async function submitMember(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSaving(true);
@@ -176,7 +249,12 @@ export default function MemberManagement() {
         {
           method: editingId ? "PATCH" : "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...form, amount: Number(form.amount) }),
+          body: JSON.stringify({
+            ...form,
+            amount: Number(form.amount),
+            academicYear: Number(form.academicYear),
+            semester: form.feeType === "membership" ? null : Number(form.semester),
+          }),
         },
       );
       const result: unknown = await response.json();
@@ -236,6 +314,9 @@ export default function MemberManagement() {
   const statusLabels: Record<string, string> = {
     pending: "ยังไม่ชำระ",
     submitted: "ส่งหลักฐานแล้ว",
+    waiting_for_review: "รอตรวจสอบ",
+    rejected: "ไม่อนุมัติ · ค้างชำระ",
+    approved: "ชำระแล้ว",
   };
 
   return (
@@ -325,16 +406,77 @@ export default function MemberManagement() {
           </label>
           <label>
             จำนวนเงิน (บาท)
+            <div className="fee-amount-control">
+              <input
+                required
+                type="number"
+                min="0.01"
+                max="9999999999.99"
+                step="0.01"
+                value={form.amount}
+                onChange={(event) => setForm({ ...form, amount: event.target.value })}
+              />
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={applyScheduleRate}
+                disabled={rateLoading}
+              >
+                {rateLoading ? "กำลังดึง..." : "ใช้อัตราที่ตั้งไว้"}
+              </button>
+            </div>
+          </label>
+          <label>
+            ประเภทค่าธรรมเนียม
+            <select
+              required
+              value={form.feeType}
+              onChange={(event) => {
+                const feeType: MemberForm["feeType"] =
+                  event.target.value === "tuition"
+                    ? "tuition"
+                    : event.target.value === "membership"
+                      ? "membership"
+                      : "";
+                setForm({ ...form, feeType, semester: feeType === "tuition" ? "1" : "" });
+              }}
+            >
+              <option value="">เลือกประเภท</option>
+              <option value="membership">ค่าสมัครสมาชิก</option>
+              <option value="tuition">ค่าบำรุงรายภาคเรียน</option>
+            </select>
+          </label>
+          <label>
+            ปีการศึกษา (พ.ศ.)
             <input
               required
               type="number"
-              min="0.01"
-              max="9999999999.99"
-              step="0.01"
-              value={form.amount}
-              onChange={(event) => setForm({ ...form, amount: event.target.value })}
+              min="2500"
+              max="2700"
+              step="1"
+              value={form.academicYear}
+              onChange={(event) => setForm({ ...form, academicYear: event.target.value })}
             />
           </label>
+          {form.feeType === "tuition" && (
+            <label>
+              ภาคเรียน
+              <select
+                required
+                value={form.semester}
+                onChange={(event) => {
+                  const semester: MemberForm["semester"] =
+                    event.target.value === "1" || event.target.value === "2"
+                      ? event.target.value
+                      : "";
+                  setForm({ ...form, semester });
+                }}
+              >
+                <option value="1">ภาคเรียนที่ 1</option>
+                <option value="2">ภาคเรียนที่ 2</option>
+              </select>
+            </label>
+          )}
           <label className="member-note-field">
             หมายเหตุ
             <textarea
@@ -359,6 +501,24 @@ export default function MemberManagement() {
       )}
 
       <div className="records-table-wrap member-table-wrap fee-table-wrap">
+        <label className="member-search fee-status-filter">
+          สถานะรายการ
+          <select
+            value={statusFilter}
+            onChange={(event) => {
+              const status: typeof statusFilter =
+                event.target.value === "pending" || event.target.value === "submitted"
+                  ? event.target.value
+                  : "all";
+              setStatusFilter(status);
+              setPage(1);
+            }}
+          >
+            <option value="all">ทั้งหมด</option>
+            <option value="pending">ยังไม่อนุมัติ / ค้างชำระ</option>
+            <option value="submitted">ส่งหลักฐานแล้ว</option>
+          </select>
+        </label>
         <table className="records-table members-table">
           <thead>
             <tr>
@@ -367,15 +527,16 @@ export default function MemberManagement() {
               <th>ช่องทางติดต่อ</th>
               <th>รอบค่าบำรุง</th>
               <th>จำนวนเงิน</th>
+              <th>ประเภท / ปี / ภาคเรียน</th>
               <th>สถานะ</th>
               <th>จัดการ</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={7} className="records-empty">กำลังโหลดสมาชิก...</td></tr>
+              <tr><td colSpan={8} className="records-empty">กำลังโหลดสมาชิก...</td></tr>
             ) : members.length === 0 ? (
-              <tr><td colSpan={7} className="records-empty">ยังไม่มีข้อมูลสมาชิก</td></tr>
+              <tr><td colSpan={8} className="records-empty">ยังไม่มีข้อมูลสมาชิก</td></tr>
             ) : members.map((member) => (
               <tr key={member.id}>
                 <td>{member.memberName || "—"}</td>
@@ -383,6 +544,13 @@ export default function MemberManagement() {
                 <td>{member.contactInfo || "—"}</td>
                 <td><span className="member-cycle-id">{member.cycleId}</span></td>
                 <td>{member.amount.toLocaleString("th-TH", { minimumFractionDigits: 2 })}</td>
+                <td>
+                  {member.feeType === "membership"
+                    ? `ค่าสมัคร · ${member.academicYear ?? "ไม่ระบุ"}`
+                    : member.feeType === "tuition"
+                      ? `ค่าบำรุง · ${member.academicYear ?? "ไม่ระบุ"} · ภาค ${member.semester ?? "—"}`
+                      : "ยังไม่ระบุประเภท"}
+                </td>
                 <td>{statusLabels[member.status] || member.status}</td>
                 <td>
                   <div className="member-row-actions">

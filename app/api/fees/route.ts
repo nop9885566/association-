@@ -4,14 +4,22 @@ import { getSupabase } from "@/lib/supabase";
 export async function GET() {
   try {
     const supabase = getSupabase();
-    const { data, error } = await supabase.rpc("get_association_fee_summary");
+    const [{ data, error }, { data: dashboardData, error: dashboardError }] = await Promise.all([
+      supabase.rpc("get_association_fee_summary"),
+      supabase.rpc("get_association_dashboard_summary", { p_academic_year: 2569 }),
+    ]);
 
     if (error) {
       console.error("Could not load association fee summary:", error.message);
       return NextResponse.json({ error: "ไม่สามารถอ่านข้อมูลสรุปจากฐานข้อมูลได้" }, { status: 500 });
     }
+    if (dashboardError) {
+      console.error("Could not load association dashboard summary:", dashboardError.message);
+      return NextResponse.json({ error: "ไม่สามารถอ่านข้อมูลสรุปทะเบียนสมาชิกได้" }, { status: 500 });
+    }
 
     const summary = Array.isArray(data) ? data[0] : null;
+    const dashboard = Array.isArray(dashboardData) ? dashboardData[0] : null;
     const fields = [
       "fee_total",
       "fee_pending",
@@ -22,7 +30,22 @@ export async function GET() {
       "submission_approved",
       "submission_rejected",
     ] as const;
-    if (!summary || fields.some((field) => !Number.isSafeInteger(summary[field]) || summary[field] < 0)) {
+    const dashboardFields = [
+      "active_guardians",
+      "active_families",
+      "active_students",
+      "membership_paid",
+      "tuition_semester_1_paid",
+      "tuition_semester_2_paid",
+    ] as const;
+    if (
+      !summary ||
+      fields.some((field) => !Number.isSafeInteger(summary[field]) || summary[field] < 0) ||
+      !dashboard ||
+      dashboardFields.some(
+        (field) => !Number.isSafeInteger(dashboard[field]) || dashboard[field] < 0,
+      )
+    ) {
       console.error("Supabase returned an invalid association fee summary");
       return NextResponse.json({ error: "รูปแบบข้อมูลสรุปจากฐานข้อมูลไม่ถูกต้อง" }, { status: 500 });
     }
@@ -36,6 +59,12 @@ export async function GET() {
       submissionWaiting: summary.submission_waiting,
       submissionApproved: summary.submission_approved,
       submissionRejected: summary.submission_rejected,
+      activeGuardians: dashboard.active_guardians,
+      activeFamilies: dashboard.active_families,
+      activeStudents: dashboard.active_students,
+      membershipPaid: dashboard.membership_paid,
+      tuitionSemester1Paid: dashboard.tuition_semester_1_paid,
+      tuitionSemester2Paid: dashboard.tuition_semester_2_paid,
     });
   } catch (error) {
     console.error("Could not initialize Supabase:", error);

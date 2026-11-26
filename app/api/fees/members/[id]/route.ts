@@ -37,6 +37,9 @@ export async function PATCH(
       p_contact_info: body.contactInfo,
       p_amount: body.amount,
       p_note: body.note,
+      p_fee_type: body.feeType,
+      p_academic_year: body.academicYear,
+      p_semester: body.semester,
     });
     if (error) {
       if (error.message.includes("invalid_session")) {

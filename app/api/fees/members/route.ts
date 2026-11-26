@@ -12,9 +12,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export async function GET(request: Request) {
-  const requestedPage = Number(new URL(request.url).searchParams.get("page") ?? "1");
+  const searchParams = new URL(request.url).searchParams;
+  const requestedPage = Number(searchParams.get("page") ?? "1");
+  const requestedStatus = searchParams.get("status") ?? "";
   if (!Number.isSafeInteger(requestedPage) || requestedPage < 1) {
     return NextResponse.json({ error: "หมายเลขหน้าไม่ถูกต้อง" }, { status: 400 });
+  }
+  if (requestedStatus && requestedStatus !== "pending" && requestedStatus !== "submitted") {
+    return NextResponse.json({ error: "สถานะรายการไม่ถูกต้อง" }, { status: 400 });
   }
 
   try {
@@ -24,6 +29,7 @@ export async function GET(request: Request) {
     const [membersResult, cyclesResult] = await Promise.all([
       session.supabase.rpc("get_association_fee_members", {
         p_session_token: session.token,
+        p_status: requestedStatus || null,
         p_limit: pageSize + 1,
         p_offset: (requestedPage - 1) * pageSize,
       }),
@@ -58,6 +64,9 @@ export async function GET(request: Request) {
           !Number.isFinite(Number(row.amount)) ||
           typeof row.status !== "string" ||
           (row.note !== null && typeof row.note !== "string") ||
+          (row.fee_type !== null && row.fee_type !== "membership" && row.fee_type !== "tuition") ||
+          (row.academic_year !== null && !Number.isInteger(row.academic_year)) ||
+          (row.semester !== null && row.semester !== 1 && row.semester !== 2) ||
           typeof row.created_at !== "string"
       ) ||
       !Array.isArray(cycles) ||
@@ -85,6 +94,9 @@ export async function GET(request: Request) {
         status: row.status,
         note: row.note,
         createdAt: row.created_at,
+        feeType: row.fee_type,
+        academicYear: row.academic_year,
+        semester: row.semester,
       })),
       cycles: cycles.map((cycle) => ({
         id: cycle.cycle_id,
@@ -123,6 +135,9 @@ export async function POST(request: Request) {
       p_contact_info: body.contactInfo,
       p_amount: body.amount,
       p_note: body.note,
+      p_fee_type: body.feeType,
+      p_academic_year: body.academicYear,
+      p_semester: body.semester,
     });
     if (error) {
       if (error.message.includes("invalid_session")) {

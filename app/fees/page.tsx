@@ -8,6 +8,9 @@ export default function FeesPage() {
         <p className="eyebrow">FEE MANAGEMENT</p>
         <h1>จัดการรายการค่าบำรุง</h1>
         <p className="intro-copy">เพิ่มหรือแก้ไขรายการค่าบำรุงแยกตามรอบสมาชิก</p>
+        <a className="primary-button fee-schedule-link" href="/fees/schedule">
+          ตั้งค่าอัตราและรอบชำระ
+        </a>
       </section>
       <MemberManagement />
     </DashboardShell>

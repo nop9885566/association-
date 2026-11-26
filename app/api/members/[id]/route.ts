@@ -33,10 +33,11 @@ export async function PATCH(
       p_member_id: id,
       p_family_id: body.familyId,
       p_student_id: body.studentId,
-      p_father_name: body.fatherName,
-      p_mother_name: body.motherName,
-      p_guardian_name: body.guardianName,
+      p_father_name: body.parent1Name,
+      p_mother_name: body.parent2Name,
+      p_guardian_name: "",
       p_child_name: body.childName,
+      p_classroom: body.classroom,
       p_is_active: body.isActive,
     });
     if (error) {

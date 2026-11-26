@@ -20,6 +20,10 @@ export async function GET(request: NextRequest) {
   if (!Number.isSafeInteger(requestedPage) || requestedPage < 1) {
     return NextResponse.json({ error: "หมายเลขหน้าไม่ถูกต้อง" }, { status: 400 });
   }
+  const studentId = (request.nextUrl.searchParams.get("studentId") ?? "").trim();
+  if (request.nextUrl.searchParams.has("studentId") && (!studentId || studentId.length > 100)) {
+    return NextResponse.json({ error: "รหัสนักเรียนไม่ถูกต้อง" }, { status: 400 });
+  }
 
   try {
     const supabase = getSupabase();
@@ -37,11 +41,19 @@ export async function GET(request: NextRequest) {
       return response;
     }
 
-    const { data, error } = await supabase.rpc("get_association_fee_records", {
-      p_session_token: token,
-      p_limit: pageSize + 1,
-      p_offset: (requestedPage - 1) * pageSize,
-    });
+    const result = studentId
+      ? await supabase.rpc("get_association_fee_records_for_student", {
+          p_session_token: token,
+          p_student_id: studentId,
+          p_limit: pageSize + 1,
+          p_offset: (requestedPage - 1) * pageSize,
+        })
+      : await supabase.rpc("get_association_fee_records", {
+          p_session_token: token,
+          p_limit: pageSize + 1,
+          p_offset: (requestedPage - 1) * pageSize,
+        });
+    const { data, error } = result;
     if (error) {
       console.error("Could not load association fee records:", error.message);
       return NextResponse.json({ error: "ไม่สามารถอ่านรายการค่าบำรุงจากฐานข้อมูลได้" }, { status: 500 });

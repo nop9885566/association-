@@ -16,7 +16,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-export default function PaymentComparison() {
+export default function PaymentComparison({ studentId = "" }: { studentId?: string }) {
   const [records, setRecords] = useState<FeeRecord[]>([]);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
@@ -28,7 +28,9 @@ export default function PaymentComparison() {
     setLoading(true);
     setError("");
 
-    fetch(`/api/fees/records?page=${page}`, { cache: "no-store" })
+    const query = new URLSearchParams({ page: String(page) });
+    if (studentId) query.set("studentId", studentId);
+    fetch(`/api/fees/records?${query.toString()}`, { cache: "no-store" })
       .then(async (response) => {
         const result: unknown = await response.json();
         if (response.status === 401) {
@@ -80,7 +82,7 @@ export default function PaymentComparison() {
     return () => {
       active = false;
     };
-  }, [page]);
+  }, [page, studentId]);
 
   const statusLabels: Record<string, string> = {
     waiting_for_review: "รอตรวจสอบ",
@@ -95,7 +97,11 @@ export default function PaymentComparison() {
       <section className="intro page-hero">
         <p className="eyebrow">PAYMENT RECORDS</p>
         <h1>เปรียบเทียบผู้ปกครองกับนักเรียน</h1>
-        <p className="intro-copy">ตรวจสอบชื่อผู้ส่งหลักฐานคู่กับรหัสนักเรียนในรายการค่าบำรุง</p>
+        <p className="intro-copy">
+          {studentId
+            ? `ตรวจสอบรายการส่งหลักฐานของนักเรียนรหัส ${studentId}`
+            : "ตรวจสอบชื่อผู้ส่งหลักฐานคู่กับรหัสนักเรียนในรายการค่าบำรุง"}
+        </p>
       </section>
 
       <section className="records-section records-page-section" aria-labelledby="records-heading">
